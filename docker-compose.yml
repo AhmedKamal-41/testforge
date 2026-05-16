@@ -1,0 +1,67 @@
+# TestForge / ShopLite — full-stack development & demo stack.
+#
+# One command to run the whole app:
+#   docker compose up --build
+#
+# Then open http://localhost:5173 (frontend) and http://localhost:8000/health (backend).
+# Postgres stays internal-only on the compose network.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shoplite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shoplite}
+      POSTGRES_DB: ${POSTGRES_DB:-shoplite}
+    ports:
+      # Bound to loopback so the Playwright DB suite can connect from the host
+      # without exposing Postgres on the LAN. Host port 5433 to avoid clashing
+      # with a local Postgres install on the default 5432.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shoplite} -d ${POSTGRES_DB:-shoplite}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./apps/backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-shoplite}:${POSTGRES_PASSWORD:-shoplite}@db:5432/${POSTGRES_DB:-shoplite}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      APP_ENV: docker
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      args:
+        # Empty = "same origin"; nginx in the container proxies /api → backend:8000.
+        VITE_API_URL: ""
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+
+volumes:
+  db_data:
