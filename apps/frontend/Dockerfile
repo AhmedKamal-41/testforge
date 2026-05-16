@@ -1,11 +1,10 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# Pin npm to the version that generated package-lock.json so `npm ci` is happy.
 RUN npm install -g npm@10.9.2
 
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json ./
+RUN npm install --no-audit --no-fund
 
 COPY . .
 

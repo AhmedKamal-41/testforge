@@ -11,6 +11,7 @@ desktop.ini
 *~
 
 # ---------- Node / Frontend ----------
+apps/frontend/package-lock.json
 node_modules/
 dist/
 build/
