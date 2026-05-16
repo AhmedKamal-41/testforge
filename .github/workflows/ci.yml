@@ -31,6 +31,9 @@ jobs:
             apps/frontend/package-lock.json
             qa/e2e/package-lock.json
 
+      - name: Pin npm to 10
+        run: npm install -g npm@10
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -151,6 +154,9 @@ jobs:
           cache: npm
           cache-dependency-path: qa/e2e/package-lock.json
 
+      - name: Pin npm to 10
+        run: npm install -g npm@10
+
       - name: Install JS dependencies
         working-directory: qa/e2e
         run: npm ci
@@ -240,6 +246,9 @@ jobs:
           cache: npm
           cache-dependency-path: qa/e2e/package-lock.json
 
+      - name: Pin npm to 10
+        run: npm install -g npm@10
+
       - name: Install JS dependencies
         working-directory: qa/e2e
         run: npm ci
@@ -296,6 +305,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: qa/e2e/package-lock.json
+
+      - name: Pin npm to 10
+        run: npm install -g npm@10
 
       - name: Install JS dependencies
         working-directory: qa/e2e
