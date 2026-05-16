@@ -1,0 +1,82 @@
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Editors / IDEs ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- Node / Frontend ----------
+node_modules/
+dist/
+build/
+.coverage/
+coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Vite / TS build artifacts
+.vite/
+vite.config.ts.timestamp-*
+*.tsbuildinfo
+
+# ---------- Python / Backend ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- Playwright ----------
+test-results/
+playwright-report/
+playwright/.cache/
+playwright/.auth/
+blob-report/
+.playwright-browsers/
+
+# ---------- Allure ----------
+allure-results/
+allure-report/
+
+# ---------- Docker ----------
+.docker/
+*.pid
+# Local-mounted DB volumes (if anyone ever bind-mounts instead of using named volumes)
+db_data/
+postgres_data/
+
+# ---------- Env / secrets ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.crt
+id_rsa*
+credentials*
+secrets*
+
+# ---------- Misc ----------
+tmp/
+.tmp/
+*.local
