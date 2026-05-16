@@ -1,555 +1,494 @@
 # TestForge
 
-> **TestForge is a production-style QA automation framework for ShopLite, a React/FastAPI e-commerce app. It validates the app across UI, API, database, accessibility, visual regression, performance, CI/CD, reporting, and flake-prevention workflows.**
+TestForge is a full-stack QA reference project: a working e-commerce app (**ShopLite**) plus the automation that validates it. Clone the repo, start Docker, and run roughly **120 functional tests** and **4 k6 load scripts** against a live stack—no external services or paid accounts.
 
-Built to demonstrate end-to-end SDET ownership — Page Object Model, API setup hooks, deterministic data, parallel CI with quality gates, Allure reporting, accessibility, visual regression, smoke-load scenarios, and real backend hardening (soft-delete catalog, atomic checkout) — all working together against a real product running in Docker.
+The app is intentionally small (seven pages, fifteen HTTP routes, five database tables) but behaves like a real product: JWT auth, role-based admin, cart merge rules, concurrency-safe checkout, and soft-deleted catalog items. The test layer mirrors how a team would structure Playwright and pytest in production: Page Object Model, API-based setup, deterministic seeds, tagged suites, Allure reporting, and GitHub Actions with quality gates.
 
-**Headline:** 120 functional/quality tests + 4 k6 performance scenarios. PR CI runs Chromium with quality-gates first; visual regression and k6 run via manual workflows.
+**At a glance**
 
----
+| | |
+|---|---|
+| Functional tests | 120 (Playwright + pytest) |
+| Load scripts | 4 (k6, manual workflow) |
+| PR CI | Typecheck, build, lint, pytest, smoke / API / regression / a11y / visual (Chromium), merged Allure |
+| Deep reference | [`project.md`](./project.md) — every endpoint, test name, and config file |
 
-## Table of contents
+## Contents
 
-- [Project overview](#project-overview)
-- [Why I built this](#why-i-built-this)
-- [Tech stack](#tech-stack)
+- [ShopLite in screenshots](#shoplite-in-screenshots)
+- [What this repository contains](#what-this-repository-contains)
+- [ShopLite application](#shoplite-application)
+- [Test automation framework](#test-automation-framework)
 - [Architecture](#architecture)
-- [QA strategy](#qa-strategy)
-- [Test coverage](#test-coverage)
-- [How to run the app](#how-to-run-the-app)
-- [How to run the tests](#how-to-run-the-tests)
-  - [Smoke tests](#smoke-tests)
-  - [Regression tests](#regression-tests)
-  - [API tests](#api-tests)
-  - [Database tests](#database-tests)
-  - [Backend fast API/integration tests (pytest, SQLite)](#backend-fast-apiintegration-tests-pytest-sqlite)
-  - [Backend Postgres integration tests (pytest, real Postgres)](#backend-postgres-integration-tests-pytest-real-postgres)
-  - [Accessibility tests](#accessibility-tests)
-  - [Visual regression tests](#visual-regression-tests)
-  - [Performance scenarios (k6)](#performance-scenarios-k6)
-- [How to view reports](#how-to-view-reports)
-- [CI/CD](#cicd)
-- [Screenshots](#screenshots)
-- [Security tradeoffs](#security-tradeoffs)
-- [Performance testing scope](#performance-testing-scope)
-- [Visual regression notes](#visual-regression-notes)
-- [Known tradeoffs](#known-tradeoffs)
-- [Future improvements](#future-improvements)
-- [Resume bullets](#resume-bullets)
-- [Repository layout](#repository-layout)
-- [QA documentation index](#qa-documentation-index)
+- [Repository structure](#repository-structure)
+- [Tech stack](#tech-stack)
+- [Test inventory](#test-inventory)
+- [Run the application](#run-the-application)
+- [Run tests](#run-tests)
+- [Reports and artifacts](#reports-and-artifacts)
+- [Continuous integration](#continuous-integration)
+- [Performance tests](#performance-tests)
+- [Visual regression](#visual-regression)
+- [Security and limitations](#security-and-limitations)
+- [Documentation](#documentation)
 
----
+## ShopLite in screenshots
 
-## Project overview
+These images match the Playwright visual baselines in [`qa/e2e/tests/visual/pages.visual.spec.ts-snapshots/`](./qa/e2e/tests/visual/pages.visual.spec.ts-snapshots/). They show the UI states the suite locks for regression.
 
-**ShopLite** is a working e-commerce app:
+### Login
 
-- **Frontend** — React + TypeScript + Vite, Tailwind, React Query (server state), Zustand (client state). Seven pages: login, products list, product detail, cart, checkout, orders history, admin products.
-- **Backend** — FastAPI + Python 3.12, SQLAlchemy 2.x, Alembic migrations, JWT auth, Pydantic v2.
-- **Database** — PostgreSQL 16 in Docker. SQLite is used for the *fast* backend pytest layer; real Postgres is used for the *integration* pytest layer (`pytest -m postgres`) and for the rest of the suite.
-- **Packaging** — Docker Compose: one command brings up `db + backend + frontend`.
+Unauthenticated entry point. Smoke tests cover valid and invalid login; regression tests cover session persistence and logout.
 
-Around that app sits a full SDET stack:
+![ShopLite login page](./docs/screenshots/01-login.png)
 
-- **Playwright + TypeScript** with Page Object Model, merged fixtures, deterministic factories, per-spec DB reset.
-- **API tests** via Playwright's request context — no browser, just contracts.
-- **DB validation** via direct Postgres queries.
-- **Accessibility** via `@axe-core/playwright`.
-- **Visual regression** via Playwright screenshot diffs — Chromium-only, manual baseline regen.
-- **Performance scenarios** via k6 against the API hot path — smoke-load benchmark, not capacity testing.
-- **Reports**: Playwright HTML + Allure (with failure categories and per-run environment).
-- **GitHub Actions CI** with a quality-gates pre-flight (typecheck + build + lint) and parallel test jobs.
+### Product catalog
 
----
+Twenty seeded products with price, stock, and out-of-stock labelling. Tests assert grid load, navigation to detail, and disabled add-to-cart when `stock` is zero.
 
-## Why I built this
+![ShopLite products list](./docs/screenshots/02-products.png)
 
-I built TestForge to show — in one repository — what senior SDET ownership looks like end-to-end. Not a tutorial fork of someone else's app, and not a framework demo against a public website I don't control. A real (small) product I designed *to be tested*, plus a real automation framework that exercises it across every layer that matters in production.
+### Cart
 
-1. **End-to-end signal in one repo.** Clone, `docker compose up`, ~100 tests pass against a live stack in minutes. No external services, no expired credentials.
-2. **Discipline over volume.** Every test is built on the same patterns — POM, API setup hooks, factories, DB reset per spec, web-first assertions, tagged thresholds — and the patterns themselves are written down in [`qa/docs/flake-policy.md`](./qa/docs/flake-policy.md).
-3. **Real CI story.** Quality gates (typecheck + build + ruff) run before heavier jobs. Failures upload screenshots, videos, traces, and a merged Allure report. Visual and load tests are deliberately separate from the PR gate — that's the right call at this scope.
-4. **Real backend hardening, not just tests.** The checkout uses an atomic `UPDATE ... WHERE stock >= q` to make overselling impossible under concurrency, and admin product deletes are soft (`is_active=false`) so historical orders never break. Both have Postgres-backed tests proving the behavior.
-5. **Honest tradeoffs.** The [Security tradeoffs](#security-tradeoffs) and [Known tradeoffs](#known-tradeoffs) sections call out what's intentionally not done, and why.
+Authenticated cart with line items, per-line remove, running total, and checkout CTA. DB tests verify the `(user_id, product_id)` unique constraint and merge-on-add behaviour.
 
----
+![ShopLite cart with two items](./docs/screenshots/03-cart.png)
 
-## Tech stack
+### Checkout
 
-| Layer        | Tech                                                                 |
-|--------------|----------------------------------------------------------------------|
-| Frontend     | React 18 + TypeScript (strict) + Vite + Tailwind CSS + React Query + Zustand |
-| Backend      | FastAPI + Python 3.12 + SQLAlchemy 2.x + Alembic + Pydantic v2 + JWT (HS256) + bcrypt |
-| Database     | PostgreSQL 16 in Docker; SQLite for the fast backend test layer      |
-| E2E / API    | Playwright + TypeScript (Page Object Model, merged fixtures, factories) |
-| DB tests     | Playwright + `pg` (direct Postgres queries)                          |
-| Accessibility| `@axe-core/playwright` (WCAG 2.1 AA, `critical`+`serious` gating)     |
-| Visual       | Playwright `toHaveScreenshot()` (Chromium-only, manual baseline regen) |
-| Performance  | k6 — tag-scoped p95/error-rate thresholds, smoke-load only           |
-| Reports      | Playwright HTML + Allure (categories + environment)                  |
-| CI           | GitHub Actions — quality-gates → parallel test jobs → Allure merge   |
-| Containers   | Docker + Docker Compose                                              |
+Order review before submit. Regression tests assert empty-cart state, stock decrement, and rejection when quantity exceeds available stock.
 
----
+![ShopLite checkout page](./docs/screenshots/04-checkout.png)
+
+### Order confirmation
+
+Shown after `POST /api/checkout` succeeds. The order id is masked in visual snapshots because it is dynamic.
+
+![ShopLite order confirmation](./docs/screenshots/05-order-confirmation.png)
+
+### Admin products
+
+Admin-only CRUD for the catalog. Regular users receive 403 from the API and are redirected from the route. Deletes are soft (`is_active=false`) so past orders keep their line-item snapshots.
+
+![ShopLite admin products form](./docs/screenshots/06-admin.png)
+
+## What this repository contains
+
+| Piece | Role |
+|-------|------|
+| **ShopLite** (`apps/frontend`, `apps/backend`) | React + FastAPI store you can run locally or in CI |
+| **Playwright framework** (`qa/e2e`) | UI, API, DB, a11y, and visual tests with POM and fixtures |
+| **Backend tests** (`apps/backend/tests`) | Fast pytest suite on SQLite; Postgres integration tests for transactions |
+| **k6 scripts** (`qa/perf`) | Smoke-load checks on API latency (optional workflow) |
+| **QA docs** (`qa/docs`) | Test plan, strategy, coverage matrix, flake policy |
+| **CI** (`.github/workflows`) | `ci.yml` on every PR; `perf.yml` on demand |
+
+Out of scope by design: real payments, email, shipping, mobile native apps, and production-grade security hardening.
+
+## ShopLite application
+
+### Pages and routes
+
+| Path | Purpose | Auth |
+|------|---------|------|
+| `/login` | Email/password sign-in | Public |
+| `/products` | Product grid (20 seeded items) | Public |
+| `/products/:id` | Product detail and add to cart | Public |
+| `/cart` | Line items and totals | User |
+| `/checkout` | Review and place order | User |
+| `/orders` | Order history | User |
+| `/admin/products` | Create, edit, soft-delete products | Admin |
+
+The frontend is served on port **5173** (nginx in Docker proxies `/api` to the backend). The API listens on **8000** with OpenAPI at `/docs`.
+
+### API surface (summary)
+
+| Area | Endpoints (examples) |
+|------|----------------------|
+| Health | `GET /health` |
+| Auth | `POST /api/auth/login`, `GET /api/auth/me` |
+| Catalog | `GET /api/products`, `GET /api/products/{id}` |
+| Cart | `GET/POST/DELETE /api/cart/items` |
+| Checkout | `POST /api/checkout` |
+| Orders | `GET /api/orders`, `GET /api/orders/{id}` |
+| Admin | `POST/PATCH/DELETE /api/admin/products` |
+
+Full route list and schemas: [`project.md` §4](./project.md#4-backend-fastapi).
+
+### Behaviour worth testing
+
+- **Checkout** uses an atomic `UPDATE … WHERE stock >= quantity` per line. Concurrent purchases cannot drive stock negative; the Postgres integration suite proves it with threaded clients.
+- **Admin delete** sets `is_active=false` and `deleted_at`. Inactive products disappear from the public catalog but remain on historical `order_items` (name and price stored at purchase time).
+- **Cart** merges duplicate product rows via a unique constraint on `(user_id, product_id)`.
+
+### Data and seeds
+
+PostgreSQL 16 runs in Compose. On backend start, Alembic migrates and seeds run idempotently: **3 users**, **20 products**.
+
+| Email | Password | Role |
+|-------|----------|------|
+| `admin@shoplite.io` | `admin123` | admin |
+| `user@shoplite.io` | `user1234` | user |
+| `alice@shoplite.io` | `alice123` | user |
+
+Credentials are demo-only and live in `apps/backend/app/seeds/seed.py`.
+
+## Test automation framework
+
+### Layout (`qa/e2e`)
+
+| Folder | Purpose |
+|--------|---------|
+| `pages/` | Page Object Model — locators and actions only |
+| `fixtures/` | Merged test fixture (`test.ts`) and auth helpers |
+| `factories/` | Canonical accounts and product factories on top of seeds |
+| `tests/smoke`, `regression`, `api`, `db`, `a11y`, `visual` | Tagged suites |
+| `utils/` | API client, DB client, shared assertions |
+| `scripts/reset-db.mjs` | Truncate and reseed between spec files |
+| `global-setup.ts` | Health check + Allure environment metadata |
+
+### Conventions
+
+- **Auth:** Fixtures call `POST /api/auth/login` and inject the JWT into `localStorage` via `addInitScript`. UI login is tested in specs, not used as setup.
+- **Data:** Seeds are canonical; factories create ad-hoc products or users when a test needs isolation.
+- **Stability:** No hard waits; web-first assertions; `retries: 2` in CI only; screenshot, video, and trace on failure.
+- **Selectors:** Components expose `data-testid`; page objects are the only place tests reference them.
+
+### Page objects
+
+| File | Covers |
+|------|--------|
+| `LoginPage.ts` | Sign-in form and errors |
+| `ProductsPage.ts` | Catalog grid |
+| `ProductDetailsPage.ts` | Detail view and add to cart |
+| `CartPage.ts` | Line items, totals, remove |
+| `CheckoutPage.ts` | Review, submit, confirmation |
+| `OrdersPage.ts` | Order history |
+| `AdminProductsPage.ts` | Admin CRUD form and table |
+| `NavBar.ts` | Navigation, logout, admin link |
+
+### Tags
+
+| Tag | Use |
+|-----|-----|
+| `@smoke` | Short critical path; runs on every PR |
+| `@regression` | Broader UI behaviour |
+| `@api` | HTTP contracts without a browser |
+| `@db` | Direct Postgres assertions |
+| `@a11y` | axe-core WCAG 2.1 AA (`critical` + `serious` fail the build) |
+| `@visual` | Chromium screenshot comparison |
+| `@postgres` | Backend pytest marker for integration tests |
+
+Doctrine and flake rules: [`qa/docs/qa-strategy.md`](./qa/docs/qa-strategy.md), [`qa/docs/flake-policy.md`](./qa/docs/flake-policy.md).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  subgraph App["ShopLite (Dockerized)"]
-    FE["React + TS + Vite<br/>(nginx :5173)"]
-    BE["FastAPI + Python 3.12<br/>(uvicorn :8000)"]
-    DB[("Postgres 16<br/>seeded:<br/>3 users<br/>20 products")]
-    FE -->|/api/* via nginx| BE
-    BE --> DB
+  subgraph app [ShopLite Docker Compose]
+    FE[Frontend :5173]
+    BE[Backend :8000]
+    DB[(Postgres 16)]
+    FE --> BE --> DB
   end
 
-  subgraph Tests["Automation"]
-    Smoke["Playwright<br/>smoke (8)"]
-    Regression["Playwright<br/>regression (36)"]
-    API["Playwright APIRequestContext<br/>api (35)"]
-    DBT["Playwright + pg<br/>db (13)"]
-    A11y["@axe-core/playwright<br/>a11y (7)"]
-    Visual["Playwright<br/>screenshot diff<br/>visual (6)"]
-    K6["k6<br/>perf (4 scenarios)"]
-    PytestFast["pytest (SQLite)<br/>fast (10)"]
-    PytestPG["pytest (Postgres)<br/>integration (6)"]
+  subgraph e2e [Playwright qa/e2e]
+    S[smoke]
+    R[regression]
+    A[api]
+    D[db]
+    Y[a11y]
+    V[visual]
   end
 
-  Smoke -->|UI| FE
-  Regression -->|UI| FE
-  Visual -->|UI| FE
-  A11y -->|UI| FE
-  API -->|HTTP| BE
-  K6 -->|HTTP load| BE
-  DBT -->|SQL| DB
-  PytestFast -->|in-process| BE
-  PytestPG -->|in-process| DB
-
-  subgraph CI["GitHub Actions"]
-    Gates["quality-gates<br/>typecheck · build · ruff"]
-    Main["ci.yml on PR + push:<br/>backend-tests · playwright-smoke<br/>playwright-api · playwright-regression<br/>accessibility · allure-report"]
-    Manual["perf.yml + visual workflow<br/>manual dispatch only"]
-    Gates --> Main
+  subgraph backend_tests [pytest apps/backend]
+    SQ[SQLite fast]
+    PG[Postgres integration]
   end
 
-  Tests -.->|reports / traces| Main
+  S & R & V & Y --> FE
+  A --> BE
+  D --> DB
+  SQ --> BE
+  PG --> DB
 ```
 
----
+## Repository structure
 
-## QA strategy
+```
+testforge/
+├── apps/
+│   ├── frontend/              React 18, Vite, Tailwind, React Query, Zustand
+│   │   └── src/pages/         login, products, cart, checkout, orders, admin
+│   └── backend/               FastAPI, SQLAlchemy, Alembic, JWT
+│       ├── app/api/           auth, products, cart, checkout, orders, admin
+│       ├── app/services/      business logic
+│       ├── app/seeds/         deterministic test data
+│       └── tests/             pytest (SQLite + Postgres integration)
+├── qa/
+│   ├── e2e/                   Playwright framework (see above)
+│   ├── perf/                  k6 scripts + README
+│   └── docs/                  test plan, strategy, coverage matrix, flake policy
+├── docs/screenshots/          UI images for this README
+├── .github/workflows/         ci.yml, perf.yml
+├── docker-compose.yml
+├── README.md                  you are here
+├── project.md                 full technical inventory
+└── CLAUDE.md                  contributor coding rules
+```
 
-Full doctrine in [`qa/docs/`](./qa/docs/). Headlines:
+## Tech stack
 
-- **Test at the lowest layer that can give a confident answer.** Don't drive the UI for something an API test can prove.
-- **Deterministic by construction.** Seeded DB, factories for ad-hoc data, DB reset per spec file.
-- **API setup hooks, never UI setup.** Tests mint a JWT via `POST /api/auth/login` and inject it into `localStorage` via Playwright init script — UI login is itself a test, not a setup step.
-- **Web-first assertions only.** Zero hard waits in the suite. Wait on assertions or specific network events, never a timer.
-- **Retries only in CI.** Local `retries = 0`; CI `retries = 2`. Anything failing on retry goes on the quarantine watchlist.
-- **Every failure ships triage evidence.** Screenshot, video, trace.
-- **Smoke is sacred.** `@smoke` runs on every PR, finishes in minutes, must stay green.
+| Layer | Technology |
+|-------|------------|
+| Frontend | React 18, TypeScript (strict), Vite, Tailwind, React Query, Zustand, React Router |
+| Backend | FastAPI, Python 3.12, SQLAlchemy 2.x, Alembic, Pydantic v2, JWT (HS256), bcrypt |
+| Database | PostgreSQL 16 (Docker); SQLite for in-process pytest |
+| E2E / API | Playwright, TypeScript |
+| Accessibility | `@axe-core/playwright` |
+| Visual | Playwright `toHaveScreenshot()` (Chromium) |
+| Load | k6 |
+| Reports | Playwright HTML, Allure (`allure-playwright` + Java CLI) |
+| CI | GitHub Actions, Docker Compose per job |
+| Lint | ruff (Python), `tsc` (frontend + e2e) |
 
-See [`qa/docs/flake-policy.md`](./qa/docs/flake-policy.md) for the full discipline.
+## Test inventory
 
----
+| Suite | Spec files | Tests | Tag / marker | Location |
+|-------|------------|------:|--------------|----------|
+| Smoke (UI) | 4 | 8 | `@smoke` | [`qa/e2e/tests/smoke/`](./qa/e2e/tests/smoke/) |
+| Regression (UI) | 9 | 36 | `@regression` | [`qa/e2e/tests/regression/`](./qa/e2e/tests/regression/) |
+| API | 6 | 35 | `@api` | [`qa/e2e/tests/api/`](./qa/e2e/tests/api/) |
+| Database | 4 | 12 | `@db` | [`qa/e2e/tests/db/`](./qa/e2e/tests/db/) |
+| Accessibility | 1 | 7 | `@a11y` | [`qa/e2e/tests/a11y/`](./qa/e2e/tests/a11y/) |
+| Visual | 1 | 6 | `@visual` | [`qa/e2e/tests/visual/`](./qa/e2e/tests/visual/) |
+| Backend (SQLite) | 4 | 10 | pytest | [`apps/backend/tests/`](./apps/backend/tests/) |
+| Backend (Postgres) | 1 | 6 | `@postgres` | [`apps/backend/tests/integration/`](./apps/backend/tests/integration/) |
+| **Total (functional)** | **30** | **120** | | |
+| k6 scenarios | 4 | 4 | — | [`qa/perf/`](./qa/perf/) |
 
-## Test coverage
+Named test list: [`project.md` §7](./project.md#7-test-inventory-every-test-named). Feature matrix: [`qa/docs/coverage-matrix.md`](./qa/docs/coverage-matrix.md).
 
-| Test type                              | Spec files | Tests | Tagged with    | Where                                                |
-|----------------------------------------|------------|------:|----------------|------------------------------------------------------|
-| Smoke (UI)                             | 4          | **8** | `@smoke`       | [`qa/e2e/tests/smoke/`](./qa/e2e/tests/smoke/)       |
-| Regression (UI)                        | 9          | **36**| `@regression`  | [`qa/e2e/tests/regression/`](./qa/e2e/tests/regression/) |
-| API contract                           | 6          | **35**| `@api`         | [`qa/e2e/tests/api/`](./qa/e2e/tests/api/)           |
-| DB validation                          | 4          | **12**| `@db`          | [`qa/e2e/tests/db/`](./qa/e2e/tests/db/)             |
-| Accessibility                          | 1          | **7** | `@a11y`        | [`qa/e2e/tests/a11y/`](./qa/e2e/tests/a11y/)         |
-| Visual                                 | 1          | **6** | `@visual`      | [`qa/e2e/tests/visual/`](./qa/e2e/tests/visual/)     |
-| Backend fast API/integration (pytest, SQLite)   | 4          | **10**| pytest         | [`apps/backend/tests/`](./apps/backend/tests/)       |
-| Backend Postgres integration (pytest)  | 1          | **6** | `@postgres`    | [`apps/backend/tests/integration/`](./apps/backend/tests/integration/) |
-| **Functional / quality total**         | **30**     | **120** |              |                                                      |
-| k6 performance scenarios               | 4          | **4** | n/a            | [`qa/perf/`](./qa/perf/)                             |
-
-> **Headline phrasing:** *120 automated functional/quality tests + 4 k6 performance scenarios.* k6 is intentionally counted separately because performance scenarios are smoke-load benchmarks, not functional tests.
-
-Feature × test-type matrix: [`qa/docs/coverage-matrix.md`](./qa/docs/coverage-matrix.md).
-
----
-
-## How to run the app
+## Run the application
 
 ```powershell
-# Clone, then from the repo root
-copy .env.example .env       # optional; defaults are fine
+copy .env.example .env    # optional; defaults work locally
 docker compose up --build
-
-# -> http://localhost:5173        frontend (nginx-served React, proxies /api → backend)
-# -> http://localhost:8000/health backend (FastAPI direct)
-# -> http://localhost:8000/docs   Swagger UI
 ```
 
-The backend entrypoint runs Alembic migrations and seeds idempotently on every boot.
-
-### Demo-only seed credentials
-
-> These are demo-only seed credentials for the canonical test database. They are not real secrets. Only `.env.example` files are committed; runtime secrets are loaded from environment variables, and `.env` is in `.gitignore`.
-
-| Email                 | Password    | Role  |
-|-----------------------|-------------|-------|
-| `admin@shoplite.io`   | `admin123`  | admin |
-| `user@shoplite.io`    | `user1234`  | user  |
-| `alice@shoplite.io`   | `alice123`  | user  |
-
-### Other useful stack commands
+| URL | Service |
+|-----|---------|
+| http://localhost:5173 | Frontend |
+| http://localhost:8000/health | Backend health |
+| http://localhost:8000/docs | Swagger UI |
 
 ```powershell
-docker compose down                                            # stop, keep data
-docker compose down -v                                         # stop, wipe volume
-docker compose exec backend python -m app.seeds.seed --reset   # drop + reseed
-docker compose exec db psql -U shoplite -d shoplite            # psql shell
-docker compose logs -f backend                                 # tail
+docker compose down              # stop, keep volume
+docker compose down -v           # stop, wipe data
+docker compose exec backend python -m app.seeds.seed --reset
+docker compose logs -f backend
 ```
 
----
+## Run tests
 
-## How to run the tests
+### Prerequisites
 
-One-time setup with the stack already up:
+- Stack running for Playwright and k6 tests that hit the API.
+- Node 22, Python 3.12, Java 17+ (for local Allure HTML).
 
 ```powershell
 cd qa\e2e
 npm install
-npx playwright install                                          # chromium + firefox + webkit
+npx playwright install
 ```
 
-### Smoke tests
+### Playwright
 
-The must-pass critical path. Resets the DB, runs cross-browser locally.
+| Command | Description |
+|---------|-------------|
+| `npm run test:smoke` | Critical path; resets DB first |
+| `npm run test:regression` | Full UI regression |
+| `npm run test:api` | HTTP contracts (no browser) |
+| `npm run test:db` | Postgres checks via `pg` |
+| `npm run test:a11y` | axe scans all main pages |
+| `npm run test:visual` | Screenshot compare (Chromium) |
+| `npm run test:visual:update` | Regenerate baselines after UI change |
+| `npm run test:browsers` | Chromium + Firefox + WebKit |
+| `npm test` | Entire Playwright suite |
 
-```powershell
-cd qa\e2e
-npm run test:smoke           # node ./scripts/reset-db.mjs && playwright test --grep @smoke --workers=1
-```
+PR CI uses Chromium only. Run `test:browsers` locally for cross-browser signal.
 
-### Regression tests
-
-Broader UI coverage — cart edge cases, admin authorization, totals consistency end-to-end, protected route redirects.
-
-```powershell
-npm run test:regression      # playwright test --grep @regression --workers=1
-```
-
-### API tests
-
-Pure contract tests using Playwright's request context — no browser. Cover auth, products, cart, orders, checkout, admin product CRUD.
-
-```powershell
-npm run test:api             # playwright test --grep @api --workers=1
-```
-
-### Database tests
-
-Direct-Postgres validation (using `pg`) — seed contents, cart row uniqueness, checkout stock decrement, admin product soft-delete persistence, soft-deleted items hidden from public catalog.
-
-```powershell
-npm run test:db              # playwright test --grep @db --workers=1
-```
-
-### Backend fast API/integration tests (pytest, SQLite)
-
-In-process FastAPI tests using `TestClient` over SQLite. Fast, no Docker needed.
+### Backend (pytest)
 
 ```powershell
 cd apps\backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-pytest -v                    # 10 tests (excludes @postgres-marked)
+pytest -v                    # 10 tests, SQLite, no Docker
+pytest -m postgres -v        # 6 tests, requires Postgres from Compose
 ```
 
-### Backend Postgres integration tests (pytest, real Postgres)
-
-Real-Postgres tests proving transactional behavior SQLite can't fairly model — concurrent oversell protection, transactional rollback, the cart unique-constraint merge. Each test runs in an isolated schema so it can't pollute the dev DB.
+### k6
 
 ```powershell
-# Docker stack must be up (Postgres on 127.0.0.1:5433)
-pytest -m postgres -v        # 6 tests, opt-in via the marker
-```
-
-### Accessibility tests
-
-`@axe-core/playwright` scans every page for `critical` and `serious` WCAG 2.1 AA violations. Suite is green; the audit pass found and fixed 4 color-contrast violations in product code.
-
-```powershell
-npm run test:a11y            # playwright test --grep @a11y --workers=1
-```
-
-### Visual regression tests
-
-Chromium-only screenshot diffs of 6 key views. Dynamic content (order ids) is masked.
-
-```powershell
-npm run test:visual          # assert against baselines
-npm run test:visual:update   # regenerate baselines (after intentional UI change)
-```
-
-> **Visual regression is Chromium-only.** Local Windows baselines (`*-chromium-win32.png`) are committed for development. Linux CI visual baselines should be regenerated (via the manual `playwright-visual` workflow) before enforcing visual regression in CI.
-
-### Performance scenarios (k6)
-
-Smoke-load benchmark for the API hot path. **Manual only** — they mutate state, are sensitive to runner noise, and would burn CI minutes on every PR. Not production capacity testing.
-
-```powershell
-# Stack must be up. k6 via winget/brew/apt, or Docker:
-docker run --rm -v "${PWD}/qa/perf:/perf" `
-  -e BASE_URL=http://host.docker.internal:8000 `
-  grafana/k6 run /perf/products.js
-
-# Once k6 is on PATH:
 k6 run qa/perf/products.js
 k6 run qa/perf/login.js
 k6 run qa/perf/cart.js
 k6 run qa/perf/checkout.js
 ```
 
-Full perf docs: [`qa/perf/README.md`](./qa/perf/README.md).
+Not on the default PR path. Use [`.github/workflows/perf.yml`](./.github/workflows/perf.yml) or see [`qa/perf/README.md`](./qa/perf/README.md).
 
-### Tag-arbitrary and browser-scoped runs
+## Reports and artifacts
 
-```powershell
-npm test                     # full suite (visual excluded from firefox/webkit by config)
-npm run test:chromium        # Chromium only
-npm run test:firefox         # Firefox only
-npm run test:webkit          # WebKit only
-npm run test:browsers        # explicit cross-browser run (chromium + firefox + webkit)
-npm run test:ui              # Playwright UI mode (interactive)
-npm run typecheck            # tsc --noEmit
-```
+Every Playwright run writes results to disk: two report formats plus per-failure triage files. Output directories are gitignored.
 
-> **Cross-browser coverage:** Playwright is configured for Chromium, Firefox, and WebKit. PR CI runs **Chromium only** for speed. Full cross-browser runs are available locally via `test:browsers`, or via the manual `workflow_dispatch` browser-selector on `ci.yml`.
+### Playwright HTML report
 
----
-
-## How to view reports
-
-Every test run produces two reports plus per-failure triage artifacts.
-
-**Playwright HTML report:**
+Configured in `playwright.config.ts` (`list` + `html`). Output: `qa/e2e/playwright-report/`.
 
 ```powershell
 cd qa\e2e
 npm test
-npm run report               # opens playwright-report/index.html
+npm run report              # opens playwright-report/index.html
 ```
 
-**Allure report:**
+### Allure report
 
-```powershell
-npm test                              # produces allure-results/
-npm run report:allure                 # generate + open static
-npm run report:allure:serve           # interactive
-```
-
-The Allure report ships with `categories.json` (groups failures into *Product defects*, *Test defects*, *Flaky tests*, *Accessibility violations*, *Visual regressions*) and `environment.properties` (base URL, OS, Node, CI flag, run timestamp).
-
-| Artifact   | Mode                | Path                                            |
-|------------|---------------------|-------------------------------------------------|
-| Screenshot | `only-on-failure`   | `qa/e2e/test-results/<spec>/test-failed-*.png`  |
-| Video      | `retain-on-failure` | `qa/e2e/test-results/<spec>/video.webm`         |
-| Trace      | `retain-on-failure` | `qa/e2e/test-results/<spec>/trace.zip`          |
-
-Open a trace with `npx playwright show-trace qa\e2e\test-results\<spec>\trace.zip`.
-
-> `allure-results/`, `allure-report/`, `playwright-report/`, and `test-results/` are gitignored — they are *evidence of a run*, not source.
-
----
-
-## CI/CD
-
-[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) on every push to `main` and every pull request.
-
-### PR CI jobs (run on every PR + push)
-
-| Job                     | What it does                                                                  |
-|-------------------------|-------------------------------------------------------------------------------|
-| `quality-gates`         | Frontend typecheck + Vite build, qa/e2e TypeScript compile, backend ruff lint |
-| `backend-tests`         | `pytest -v` (fast SQLite suite, excludes `@postgres` marker)                  |
-| `playwright-smoke`      | Docker stack up → DB reset → `@smoke` on Chromium                             |
-| `playwright-api`        | Docker stack up → `@api` on Chromium                                          |
-| `playwright-regression` | Docker stack up → `@regression` on Chromium                                   |
-| `accessibility`         | Docker stack up → `@a11y` on Chromium                                         |
-| `allure-report`         | Downloads every job's `allure-results-*`, merges into one Allure HTML         |
-
-`quality-gates` runs first; `backend-tests` and `playwright-*` only run if it passes.
-
-### Manual workflows (workflow_dispatch only)
-
-| Workflow                     | Trigger                                                                |
-|------------------------------|------------------------------------------------------------------------|
-| `playwright-visual` (in `ci.yml`) | `run_visual: true` input — used to regenerate Linux baselines      |
-| `perf.yml`                   | `script` choice input (`all / products / login / cart / checkout`)     |
-
-**Why visual + perf aren't on the PR gate:** visual baselines are platform-pinned (current ones are Windows); k6 scenarios mutate state and are runner-noise-sensitive.
-
-### Artifacts uploaded per job (always, including on failure)
-
-| Artifact                            | Contents                                              |
-|-------------------------------------|-------------------------------------------------------|
-| `playwright-report-<suite>`         | Playwright's HTML report for that suite               |
-| `allure-results-<suite>`            | Raw Allure JSON (consumed by the merge job)           |
-| `test-artifacts-<suite>`            | Screenshots, videos, traces from failed tests         |
-| `allure-report`                     | Merged Allure HTML                                    |
-| `docker-logs-<suite>`               | `docker compose logs` on failure                      |
-| `k6-summaries`                      | `summary-*.json` from each perf scenario              |
-
-Download from the run's **Summary → Artifacts** panel.
-
----
-
-## Screenshots
-
-Captured from the Playwright visual-regression baselines, so these are exactly what the suite asserts against — no curation. Raw files in [`qa/e2e/tests/visual/pages.visual.spec.ts-snapshots/`](./qa/e2e/tests/visual/pages.visual.spec.ts-snapshots/).
-
-| Login | Products list |
-|---|---|
-| ![Login page](./docs/screenshots/01-login.png) | ![Products list](./docs/screenshots/02-products.png) |
-| **Cart** | **Checkout** |
-| ![Cart with two items](./docs/screenshots/03-cart.png) | ![Checkout page](./docs/screenshots/04-checkout.png) |
-| **Order confirmation** | **Admin products** |
-| ![Order confirmation panel](./docs/screenshots/05-order-confirmation.png) | ![Admin products form](./docs/screenshots/06-admin.png) |
-
----
-
-## Security tradeoffs
-
-Called out explicitly because pretending a portfolio project is production-ready is a worse signal than admitting where it isn't.
-
-- **JWTs are stored in `localStorage`** via Zustand's `persist` middleware. This is fine for demo simplicity but is a real security tradeoff: any XSS on the site can read the token. In production this would be replaced with **HttpOnly, Secure, SameSite cookies** to keep the token off the JS heap. Documented in [`qa/docs/qa-strategy.md`](./qa/docs/qa-strategy.md).
-- **Demo seed credentials are committed** at `apps/backend/app/seeds/seed.py`. They are seed-only — not real secrets — and exist so reviewers can run the suite immediately. Only `.env.example` files are committed; `.env` is gitignored.
-- **CORS is permissive** (compose default allows `http://localhost:5173`). In production, the allowlist would be the real origin only.
-- **No rate limiting** on `/api/auth/login` — fine for the seeded demo, would be a brute-force vector against real users.
-- **Bcrypt cost factor is default** (12). Fine; tunable in production based on the target threat model and login throughput.
-
----
-
-## Performance testing scope
-
-k6 here is **smoke-load**, not production capacity testing — runs locally or via a manual GitHub Actions workflow against a single-host Docker stack. The numbers prove latency under light, controlled load and catch regressions; they are **not** a representative throughput ceiling.
-
-| Scenario       | Endpoint                  | Profile               | Threshold                                              |
-|----------------|---------------------------|------------------------|--------------------------------------------------------|
-| `products.js`  | `GET /api/products`       | ramp to 10 VUs, ~35s   | `p(95) < 500ms`, error rate `< 1%`                     |
-| `login.js`     | `POST /api/auth/login`    | ramp to 5 VUs, ~35s    | `p(95) < 500ms`, error rate `< 1%`                     |
-| `cart.js`      | `POST /api/cart/items`    | ramp to 5 VUs, ~30s    | `p(95) < 500ms`, error rate `< 1%`                     |
-| `checkout.js`  | `POST /api/checkout`      | **1 VU constant**, ~30s| `p(95) < 800ms` on checkout call, error rate `< 1%`    |
-
-**Data isolation for checkout.** All k6 scripts authenticate as the single seeded user. For products/login/cart there's no shared mutable state per-VU, so those run with small VU counts. For checkout, two VUs racing on the same cart would produce spurious empty-cart errors — so `checkout.js` runs **1 VU** and clears the cart at the start of every iteration. Each iteration is self-contained: clear → add → checkout.
-
-Full perf docs (install, run, threshold interpretation, design notes): [`qa/perf/README.md`](./qa/perf/README.md).
-
----
-
-## Visual regression notes
-
-**Status:** Chromium-only. Manual in CI. **Current baselines are local Windows baselines** (`*-chromium-win32.png`). Linux baselines should be regenerated before enforcing visual checks in Ubuntu CI.
-
-The visual suite is therefore **not on the PR gate** — it lives behind the manual `playwright-visual` workflow_dispatch path in `ci.yml`, where you can run it explicitly when you intend to regenerate or compare baselines.
-
-What the suite covers (6 views): login, products list, cart, checkout, order confirmation, admin products form. Dynamic content (the order id on the confirmation panel) is masked via Playwright's pink overlay. Diff tolerance: `maxDiffPixelRatio: 0.01`.
+`allure-playwright` writes JSON to `qa/e2e/allure-results/`. `global-setup.ts` seeds `environment.properties` (base URL, OS, Node, CI flag, timestamp) and copies [`qa/e2e/allure/categories.json`](./qa/e2e/allure/categories.json).
 
 ```powershell
 cd qa\e2e
-npm run test:visual          # assert against baselines (Chromium only)
-npm run test:visual:update   # regenerate baselines after an intentional UI change
+npm test
+npm run report:allure:generate
+npm run report:allure:open
+npm run report:allure:serve     # dev server from raw results
+npm run report:allure           # generate + open
 ```
 
----
+**Allure categories**
 
-## Known tradeoffs
+| Category | Typical cause |
+|----------|----------------|
+| Product defects | Failed assertions (text, visibility, URL, screenshots) |
+| Test defects | Broken fixtures or setup |
+| Flaky tests | Passed after CI retry |
+| Accessibility violations | axe critical/serious |
+| Visual regressions | Screenshot mismatch |
 
-- **A11y suite asserts only on `serious` + `critical`.** `moderate` and `minor` violations aren't gated. Common industry default.
-- **Allure CLI needs Java.** Documented prerequisite; the CI workflow installs it.
-- **Each Playwright CI job builds its own Docker stack** (~3–5 min per job). Acceptable for portfolio scope.
-- **Browser perf is not measured.** k6 covers the API. Frontend perf (LCP, TBT, INP) would be Lighthouse-CI's job — different tool.
-- **Quarantine policy aging isn't automated.** The flake doc commits to triaging quarantined tests within 1 working day; the SLA is on paper, not enforced by a workflow yet.
-- See also: [Performance testing scope](#performance-testing-scope) and [Visual regression notes](#visual-regression-notes) above.
+### Failure triage (Playwright)
 
----
+| Artifact | Config | Location |
+|----------|--------|----------|
+| Screenshot | `only-on-failure` | `test-results/<spec>/test-failed-1.png` |
+| Video | `retain-on-failure` | `test-results/<spec>/video.webm` |
+| Trace | `retain-on-failure` | `test-results/<spec>/trace.zip` |
 
-## Future improvements
-
-In rough order of bang-for-buck:
-
-1. **CI status badge** in this README (one-liner once a remote exists).
-2. **Linux visual baselines** committed alongside `-win32.png` so visual can rejoin the PR gate.
-3. **Allure history on GitHub Pages** for cross-run trend graphs.
-4. **Nightly cross-browser cron** — full suite on Firefox + WebKit. PR keeps its fast Chromium-only gate.
-5. **Per-VU user isolation in k6** via a registration endpoint — unlocks meaningful concurrent-user throughput numbers.
-6. **Lighthouse-CI** for frontend perf metrics.
-7. **Stress + soak k6 profiles** as separate workflows.
-8. **Auth migration to HttpOnly cookies** — closes the `localStorage` XSS exposure.
-9. **Rate-limiting on login** + **OAuth provider option**.
-
----
-
-## Resume bullets
-
-Copy-paste-ready for an SDET / Senior SDET / QA Engineer resume.
-
-- **Built TestForge, a production-style QA automation framework** validating a React/FastAPI e-commerce app across UI, API, database, accessibility, visual, and performance layers — **120 functional/quality tests + 4 k6 smoke-load scenarios** built on Playwright, pytest (SQLite fast layer + real-Postgres integration layer), axe-core, k6, and Allure.
-- **Implemented Page Object Model with merged fixtures** that mint JWTs via API (never via UI login), deterministic factories, per-spec DB reset, and tagged suites (`@smoke`, `@regression`, `@api`, `@db`, `@a11y`, `@visual`, `@postgres`) running across Chromium, Firefox, and WebKit.
-- **Hardened backend quality** by adding soft-delete catalog behavior (order history survives product removal), an atomic `UPDATE ... WHERE stock >= q` checkout that makes overselling impossible under concurrency, and Postgres-backed integration tests proving the rollback + concurrent-checkout behavior.
-- **Authored a standalone flake-prevention policy** (no hard waits, retry-only-in-CI, seeded data, API setup hooks, quarantine lifecycle, selector hierarchy) with a contributor-runnable audit grep checklist — every rule paired with the file:line it's wired in.
-- **Identified and fixed 4 WCAG 2.1 AA color-contrast violations** during the accessibility audit pass; fixed in product code rather than suppressed.
-- **Stood up GitHub Actions CI** with a quality-gates pre-flight (frontend typecheck + Vite build, qa/e2e TypeScript compile, backend ruff lint) followed by parallel Playwright suites (smoke, API, regression, accessibility) and a merge job that consolidates per-suite Allure results into one report. Per-failure screenshots, videos, and traces uploaded as artifacts.
-- **Wired k6 smoke-load scenarios** for the API hot path with tag-scoped thresholds (p95 < 500ms / 800ms by endpoint, error rate < 1%); manual workflow with a script-selector input and summary JSON artifacts for trend tracking.
-
----
-
-## Repository layout
-
-```
-testforge/
-├── .github/workflows/
-│   ├── ci.yml                Main CI: quality-gates + backend pytest + 4 Playwright suites + Allure merge
-│   └── perf.yml              Manual-only k6 runner
-├── docs/screenshots/         Page screenshots used in this README
-├── apps/
-│   ├── frontend/             React + TS + Vite + Tailwind + React Query + Zustand
-│   └── backend/              FastAPI + SQLAlchemy + Alembic + JWT
-│       └── tests/
-│           ├── test_*.py             Fast API/integration tests (SQLite, TestClient)
-│           └── integration/          Postgres integration tests (`pytest -m postgres`)
-├── qa/
-│   ├── e2e/                  Playwright framework
-│   │   ├── pages/                  Page Object Model (8 page objects)
-│   │   ├── fixtures/               auth + merged fixtures
-│   │   ├── factories/              canonical accounts + factories
-│   │   ├── utils/                  api-client.ts, db-client.ts, db-utils.ts, assertions.ts
-│   │   ├── tests/                  smoke / regression / api / db / a11y / visual
-│   │   ├── allure/categories.json  Committed Allure failure categorization
-│   │   ├── scripts/reset-db.mjs    DB reset between specs
-│   │   ├── playwright.config.ts
-│   │   └── global-setup.ts         /health check + Allure environment.properties
-│   ├── perf/                 k6 scenarios (manual)
-│   └── docs/                 QA paper trail
-├── docker-compose.yml
-├── README.md                 this file
-├── project.md                exhaustive technical inventory (every metric, file, endpoint)
-├── CLAUDE.md                 coding rules for contributors
-└── .gitignore
+```powershell
+npx playwright show-trace qa\e2e\test-results\<spec>\trace.zip
 ```
 
----
+### CI artifacts
 
-## QA documentation index
+Download from the workflow run **Summary → Artifacts**.
 
-- [`qa/docs/test-plan.md`](./qa/docs/test-plan.md) — scope, environments, entry/exit criteria
-- [`qa/docs/coverage-matrix.md`](./qa/docs/coverage-matrix.md) — feature × test-type grid
-- [`qa/docs/qa-strategy.md`](./qa/docs/qa-strategy.md) — pyramid, principles, tagging, headline rules, security note
-- [`qa/docs/flake-policy.md`](./qa/docs/flake-policy.md) — full flake-prevention discipline
-- [`qa/docs/release-checklist.md`](./qa/docs/release-checklist.md) — pre-release gate
-- [`qa/docs/bug-report-template.md`](./qa/docs/bug-report-template.md) — bug report shape
-- [`qa/perf/README.md`](./qa/perf/README.md) — k6 scenarios, thresholds, design notes, limitations
-- [`project.md`](./project.md) — technical inventory (every metric)
-- [`CLAUDE.md`](./CLAUDE.md) — coding rules for contributors
+| Artifact | Contents |
+|----------|----------|
+| `playwright-report-<suite>` | HTML per matrix suite |
+| `playwright-report-visual` | HTML for visual job |
+| `allure-results-*` | Raw Allure JSON per job |
+| `allure-report` | Single merged Allure HTML |
+| `test-artifacts-<suite>` | Failure screenshots, videos, traces |
+| `visual-diffs` | Visual comparison output |
+| `visual-snapshots-linux` | Regenerated Linux baselines (manual workflow only) |
+| `docker-logs-<suite>` | Compose logs when a job fails |
+| `k6-summaries` | k6 JSON summaries (`perf.yml` only) |
+
+The `allure-report` job merges every `allure-results-*` upload before generating HTML once.
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) — push and pull requests to `main`.
+
+```mermaid
+flowchart TB
+  gates[quality-gates]
+  be[backend-tests]
+  pw[playwright matrix]
+  vis[playwright-visual]
+  al[allure-report]
+  gates --> be
+  gates --> pw
+  gates --> vis
+  pw --> al
+  vis --> al
+```
+
+| Job | What runs |
+|-----|-----------|
+| `quality-gates` | Frontend `npm install`, typecheck, Vite build; e2e `tsc`; backend `ruff` |
+| `backend-tests` | `pytest -v` (SQLite) |
+| `playwright-smoke` | Compose up → `@smoke` |
+| `playwright-api` | `@api` |
+| `playwright-regression` | `@regression` |
+| `accessibility` | `@a11y` |
+| `playwright-visual` | `@visual`; Linux snapshots via Actions cache |
+| `allure-report` | Merge Allure results from all Playwright jobs |
+
+`quality-gates` blocks downstream jobs. Each Playwright job builds its own Compose stack. `allure-report` runs with `if: always()` after Playwright finishes.
+
+**Visual baselines:** Repo commits Windows Chromium PNGs (`*-chromium-win32.png`). Ubuntu CI uses Linux snapshots (cache on first run). To refresh: Actions → CI → Run workflow → **Regenerate Linux visual snapshots** → download `visual-snapshots-linux` and commit `*-chromium-linux.png` if you want them in git.
+
+**Load tests:** [`.github/workflows/perf.yml`](./.github/workflows/perf.yml) (`workflow_dispatch`, script selector).
+
+## Performance tests
+
+k6 exercises the API under light, fixed load on a single Docker host. Useful for regression on latency, not capacity planning.
+
+| Script | Endpoint | Profile |
+|--------|----------|---------|
+| `products.js` | `GET /api/products` | ramp to 10 VUs |
+| `login.js` | `POST /api/auth/login` | ramp to 5 VUs |
+| `cart.js` | `POST /api/cart/items` | ramp to 5 VUs |
+| `checkout.js` | `POST /api/checkout` | 1 VU (cart cleared each iteration) |
+
+Typical thresholds: p95 under 500–800 ms, error rate under 1%. Details: [`qa/perf/README.md`](./qa/perf/README.md).
+
+## Visual regression
+
+Six full-page or component screenshots (see [ShopLite in screenshots](#shoplite-in-screenshots)). Chromium only; `maxDiffPixelRatio: 0.01` in config. Order confirmation masks the dynamic order id.
+
+```powershell
+cd qa\e2e
+npm run test:visual
+npm run test:visual:update
+```
+
+## Security and limitations
+
+Portfolio / demo scope—not production hardened.
+
+| Topic | Current state |
+|-------|----------------|
+| JWT storage | `localStorage` (easy for tests; XSS risk in production) |
+| Seed passwords | In source for reproducibility |
+| CORS | Local frontend origin in Compose defaults |
+| Rate limiting | None on login |
+| a11y gate | `critical` and `serious` only |
+| Allure locally | Requires Java |
+| CI cost | Each Playwright job starts its own Compose stack |
+| k6 checkout | Single VU to avoid cart races on one seed user |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [`qa/docs/test-plan.md`](./qa/docs/test-plan.md) | Scope and entry criteria |
+| [`qa/docs/coverage-matrix.md`](./qa/docs/coverage-matrix.md) | Feature × test type |
+| [`qa/docs/qa-strategy.md`](./qa/docs/qa-strategy.md) | Pyramid, tagging, conventions |
+| [`qa/docs/flake-policy.md`](./qa/docs/flake-policy.md) | Stability rules |
+| [`qa/docs/release-checklist.md`](./qa/docs/release-checklist.md) | Pre-release checks |
+| [`qa/perf/README.md`](./qa/perf/README.md) | k6 install and thresholds |
+| [`project.md`](./project.md) | Full inventory (routes, tests, configs) |
+| [`CLAUDE.md`](./CLAUDE.md) | Coding rules for contributors |
