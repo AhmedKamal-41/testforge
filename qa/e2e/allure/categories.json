@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Product defects",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*(?:Expected|expected|toHaveScreenshot|toHaveText|toBeVisible|toHaveURL).*"
+  },
+  {
+    "name": "Test defects",
+    "matchedStatuses": ["broken"]
+  },
+  {
+    "name": "Flaky tests",
+    "matchedStatuses": ["passed", "failed"],
+    "flaky": true
+  },
+  {
+    "name": "Accessibility violations",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*(?:critical|serious).*color-contrast.*|.*WCAG.*"
+  },
+  {
+    "name": "Visual regressions",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*toHaveScreenshot.*|.*Screenshot comparison failed.*"
+  }
+]
