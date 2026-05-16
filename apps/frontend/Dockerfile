@@ -1,8 +1,8 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# Pin npm to the major version that generated the lockfile so `npm ci` is happy.
-RUN npm install -g npm@11
+# Pin npm to the version that generated package-lock.json so `npm ci` is happy.
+RUN npm install -g npm@10.9.2
 
 COPY package.json package-lock.json ./
 RUN npm ci

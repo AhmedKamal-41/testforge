@@ -32,7 +32,7 @@ jobs:
             qa/e2e/package-lock.json
 
       - name: Pin npm to 10
-        run: npm install -g npm@10
+        run: npm install -g npm@10.9.2
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -155,7 +155,7 @@ jobs:
           cache-dependency-path: qa/e2e/package-lock.json
 
       - name: Pin npm to 10
-        run: npm install -g npm@10
+        run: npm install -g npm@10.9.2
 
       - name: Install JS dependencies
         working-directory: qa/e2e
@@ -247,7 +247,7 @@ jobs:
           cache-dependency-path: qa/e2e/package-lock.json
 
       - name: Pin npm to 10
-        run: npm install -g npm@10
+        run: npm install -g npm@10.9.2
 
       - name: Install JS dependencies
         working-directory: qa/e2e
@@ -307,7 +307,7 @@ jobs:
           cache-dependency-path: qa/e2e/package-lock.json
 
       - name: Pin npm to 10
-        run: npm install -g npm@10
+        run: npm install -g npm@10.9.2
 
       - name: Install JS dependencies
         working-directory: qa/e2e
