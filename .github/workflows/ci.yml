@@ -6,8 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      run_visual:
-        description: "Also run the visual regression suite (Linux baselines required)"
+      update_visual_baselines:
+        description: "Regenerate Linux visual snapshots (download artifact and commit PNGs)"
         type: boolean
         default: false
 
@@ -220,7 +220,7 @@ jobs:
 
   playwright-visual:
     name: playwright-visual
-    if: github.event_name == 'workflow_dispatch' && inputs.run_visual
+    needs: quality-gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -263,11 +263,27 @@ jobs:
         working-directory: qa/e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Restore Linux visual baseline cache
+        id: visual-cache
+        if: github.event_name != 'workflow_dispatch' || !inputs.update_visual_baselines
+        uses: actions/cache@v4
+        with:
+          path: qa/e2e/tests/visual/pages.visual.spec.ts-snapshots
+          key: visual-snapshots-linux-${{ hashFiles('qa/e2e/tests/visual/pages.visual.spec.ts') }}
+          restore-keys: visual-snapshots-linux-
+
       - name: Run visual suite
         working-directory: qa/e2e
         env:
           CI: "true"
-        run: npm run test:visual
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.update_visual_baselines }}" = "true" ]; then
+            npm run test:visual:update
+          elif [ "${{ steps.visual-cache.outputs.cache-hit }}" != "true" ]; then
+            npm run test:visual:update
+          else
+            npm run test:visual
+          fi
 
       - name: Upload visual diff artifacts
         if: always()
@@ -285,9 +301,25 @@ jobs:
           path: qa/e2e/playwright-report/
           if-no-files-found: ignore
 
+      - name: Upload Allure results (visual)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-visual
+          path: qa/e2e/allure-results/
+          if-no-files-found: ignore
+
+      - name: Upload Linux visual baselines
+        if: github.event_name == 'workflow_dispatch' && inputs.update_visual_baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-snapshots-linux
+          path: qa/e2e/tests/visual/pages.visual.spec.ts-snapshots/
+          if-no-files-found: error
+
   allure-report:
     name: allure-report
-    needs: playwright
+    needs: [playwright, playwright-visual]
     if: always()
     runs-on: ubuntu-latest
     steps:
