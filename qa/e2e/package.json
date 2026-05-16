@@ -1,0 +1,41 @@
+{
+  "name": "shoplite-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test": "playwright test",
+    "test:smoke": "node ./scripts/reset-db.mjs && playwright test --grep @smoke --workers=1",
+    "test:smoke:nopin": "playwright test --grep @smoke",
+    "test:regression": "playwright test --grep @regression --workers=1",
+    "test:api": "playwright test --grep @api --workers=1",
+    "test:db": "playwright test --grep @db --workers=1",
+    "test:a11y": "playwright test --grep @a11y --workers=1",
+    "test:visual": "node ./scripts/reset-db.mjs && playwright test --project=chromium --grep @visual --workers=1",
+    "test:visual:update": "node ./scripts/reset-db.mjs && playwright test --project=chromium --grep @visual --workers=1 --update-snapshots",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:webkit": "playwright test --project=webkit",
+    "test:browsers": "playwright test --project=chromium --project=firefox --project=webkit",
+    "report": "playwright show-report",
+    "report:allure": "allure generate allure-results --clean -o allure-report && allure open allure-report",
+    "report:allure:generate": "allure generate allure-results --clean -o allure-report",
+    "report:allure:open": "allure open allure-report",
+    "report:allure:serve": "allure serve allure-results",
+    "typecheck": "tsc --noEmit",
+    "install:browsers": "playwright install"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.20.0",
+    "allure-commandline": "^2.41.0",
+    "allure-playwright": "^3.8.0",
+    "axe-core": "^4.11.4",
+    "pg": "^8.20.0",
+    "typescript": "^5.7.2"
+  }
+}
