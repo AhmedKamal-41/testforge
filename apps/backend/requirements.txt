@@ -1,0 +1,19 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy>=2.0,<3
+alembic>=1.14
+
+# Pydantic 2.11+ ships pydantic-core with PyO3 0.23+, required for Python 3.14.
+pydantic>=2.11
+pydantic-settings>=2.7
+email-validator>=2.2
+
+python-jose[cryptography]>=3.3
+
+# bcrypt 4.3+ ships Python 3.14 wheels. Fall back to >=4.2 on 3.13.
+bcrypt>=4.3
+
+python-multipart>=0.0.20
+httpx>=0.28
+pytest>=8.3
+ruff>=0.8

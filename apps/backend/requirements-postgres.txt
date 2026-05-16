@@ -1,0 +1,7 @@
+# PostgreSQL driver — install on top of requirements.txt when you want to point
+# DATABASE_URL at a real Postgres instance.
+#
+# Tests in Phase 1 default to SQLite (see TEST_DATABASE_URL) and do not need this.
+# Phase 3 (Docker) makes Postgres the default everywhere.
+
+psycopg[binary]>=3.2

@@ -1,0 +1,17 @@
+# Minimal ruff config — catches real bugs without churning style.
+# E/F = pyflakes + pycodestyle errors, I = import sort, B = common bug patterns.
+# We intentionally don't enable the wider rule sets here; tightening can land later.
+
+line-length = 110
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "B"]
+ignore = [
+    "E501",  # long lines — let format/line-length handle if we add it later
+    "B008",  # function call in default arg — FastAPI Depends(...) idiom
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["B018"]  # useless expressions in tests are fine (assertions)
+"alembic/**" = ["E402"]  # alembic env imports often follow path setup
